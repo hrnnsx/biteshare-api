@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 
+	"biteshare-api/internal/auth"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -23,6 +24,9 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	// Admin login returns a signed JWT after the password is verified.
 	r.POST("/auth/login", s.adminLoginHandler)
+
+	// Admin listing requires a valid bearer token with the admin role.
+	r.GET("/admins", auth.RequireAdmin(s.jwtManager), s.listAdminsHandler)
 
 	return r
 }
