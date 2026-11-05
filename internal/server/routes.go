@@ -21,6 +21,9 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	r.GET("/health", s.healthHandler)
 
+	// Admin login returns a signed JWT after the password is verified.
+	r.POST("/auth/login", s.adminLoginHandler)
+
 	return r
 }
 
