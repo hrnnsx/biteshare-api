@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -9,19 +10,48 @@ import (
 
 	_ "github.com/joho/godotenv/autoload"
 
+	"biteshare-api/internal/auth"
 	"biteshare-api/internal/database"
 )
 
 type Server struct {
-	port int
+	port       int
+	jwtManager *auth.JWTManager
 
 	db database.Service
 }
 
 func NewServer() *http.Server {
 	port, _ := strconv.Atoi(os.Getenv("PORT"))
+	tokenTTL := 24 * time.Hour
+
+	// Use a configured token lifetime when one is provided.
+	if configuredTTL := os.Getenv("JWT_ACCESS_TOKEN_TTL"); configuredTTL != "" {
+		parsedTTL, err := time.ParseDuration(configuredTTL)
+		if err != nil {
+			log.Fatalf("invalid JWT_ACCESS_TOKEN_TTL: %v", err)
+		}
+		tokenTTL = parsedTTL
+	}
+
+	// Keep login disabled until a secure JWT secret is configured.
+	var jwtManager *auth.JWTManager
+	if secret := os.Getenv("JWT_SECRET"); secret != "" {
+		issuer := os.Getenv("JWT_ISSUER")
+		if issuer == "" {
+			issuer = "biteshare-api"
+		}
+
+		var err error
+		jwtManager, err = auth.NewJWTManager(secret, tokenTTL, issuer)
+		if err != nil {
+			log.Fatalf("invalid JWT configuration: %v", err)
+		}
+	}
+
 	NewServer := &Server{
-		port: port,
+		port:       port,
+		jwtManager: jwtManager,
 
 		db: database.New(),
 	}
