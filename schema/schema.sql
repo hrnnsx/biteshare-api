@@ -1,7 +1,3 @@
--- BiteShare / Food Rescue Platform
--- PostgreSQL 14+ | Donation + E-commerce schema
--- No notifications or food_processing tables.
--- Run: psql -U postgres -d bitshare -f schema.sql
 BEGIN;
 
 CREATE TABLE donors (
