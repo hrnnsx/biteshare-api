@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Repository errors
+// Repository errors.
 var (
 	ErrDonationNotFound = errors.New("donation request not found")
 )
@@ -62,23 +62,21 @@ func (r *donationRepository) Create(
 	request *model.DonationRequest,
 	foods []model.DonatedFood,
 ) error {
-
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-
-		// Create donor
+		// Create donor.
 		if err := tx.Create(donor).Error; err != nil {
 			return err
 		}
 
-		// Assign donor ID to donation request
+		// Assign donor ID to donation request.
 		request.DonorID = donor.ID
 
-		// Create donation request
+		// Create donation request.
 		if err := tx.Create(request).Error; err != nil {
 			return err
 		}
 
-		// Create donated foods
+		// Create donated foods.
 		for i := range foods {
 			foods[i].RequestID = request.ID
 
@@ -96,7 +94,6 @@ func (r *donationRepository) FindByID(
 	ctx context.Context,
 	requestID int32,
 ) (*model.DonationRequest, error) {
-
 	var donation model.DonationRequest
 
 	err := r.db.WithContext(ctx).
@@ -126,24 +123,20 @@ func (r *donationRepository) FindAll(
 	page int,
 	limit int,
 ) ([]model.DonationRequest, int64, error) {
-
 	var donations []model.DonationRequest
 	var total int64
 
 	query := r.db.WithContext(ctx).
 		Model(&model.DonationRequest{})
 
-	// Apply status filter when provided.
 	if status != "" {
 		query = query.Where("status = ?", status)
 	}
 
-	// Count matching records.
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// Apply pagination defaults.
 	if page < 1 {
 		page = 1
 	}
@@ -154,7 +147,6 @@ func (r *donationRepository) FindAll(
 
 	offset := (page - 1) * limit
 
-	// Retrieve donation requests.
 	err := query.
 		Preload("Donor").
 		Preload("Foods").
@@ -177,7 +169,6 @@ func (r *donationRepository) UpdateStatus(
 	requestID int32,
 	status model.DonationStatus,
 ) error {
-
 	result := r.db.WithContext(ctx).
 		Model(&model.DonationRequest{}).
 		Where("request_id = ?", requestID).

@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -23,7 +21,7 @@ type DonationService interface {
 	Create(ctx context.Context, input dto.CreateDonationRequest) (*model.DonationRequest, error)
 	GetByID(ctx context.Context, requestID int32) (*model.DonationRequest, error)
 	GetAll(ctx context.Context, status string, page, limit int) ([]model.DonationRequest, int64, error)
-	Review(ctx context.Context, requestID int32, input dto.ReviewDonationRequest) error
+	Review(ctx context.Context, requestID int32, input dto.ReviewDonationRequest) (*model.DonationRequest, error)
 }
 
 type donationService struct {
@@ -31,31 +29,21 @@ type donationService struct {
 }
 
 func NewDonationService(repo repository.DonationRepository) DonationService {
-	return &donationService{
-		repo: repo,
-	}
+	return &donationService{repo: repo}
 }
 
-// Create creates a new donation request along with its donor and donated foods.
 func (s *donationService) Create(
 	ctx context.Context,
 	input dto.CreateDonationRequest,
 ) (*model.DonationRequest, error) {
-
-	// Validate donor information.
 	if strings.TrimSpace(input.Donor.Name) == "" ||
 		strings.TrimSpace(input.Donor.Email) == "" ||
 		strings.TrimSpace(input.Donor.Phone) == "" ||
-		strings.TrimSpace(input.Donor.Address) == "" {
+		strings.TrimSpace(input.Donor.Address) == "" ||
+		len(input.Foods) == 0 {
 		return nil, ErrInvalidDonationData
 	}
 
-	// A donation request must contain at least one food item.
-	if len(input.Foods) == 0 {
-		return nil, ErrInvalidDonationData
-	}
-
-	// Convert donor DTO into donor model.
 	donor := &model.Donor{
 		Name:    strings.TrimSpace(input.Donor.Name),
 		Email:   strings.TrimSpace(input.Donor.Email),
@@ -63,68 +51,55 @@ func (s *donationService) Create(
 		Address: strings.TrimSpace(input.Donor.Address),
 	}
 
-	// Create donation request model.
 	request := &model.DonationRequest{
 		Status:      model.DonationPending,
-		Notes:       input.Notes,
+		Notes:       stringToPointer(input.Notes),
 		SubmittedAt: time.Now(),
 	}
 
-	// Convert food DTOs into food models.
 	foods := make([]model.DonatedFood, 0, len(input.Foods))
 
-	for _, item := range input.Foods {
-		foodName := strings.TrimSpace(item.FoodName)
-		unit := strings.TrimSpace(item.Unit)
-
-		if foodName == "" || unit == "" ||
-			math.IsNaN(item.Quantity) ||
-			math.IsInf(item.Quantity, 0) ||
-			item.Quantity <= 0 {
+	for _, foodInput := range input.Foods {
+		if strings.TrimSpace(foodInput.FoodName) == "" ||
+			foodInput.Quantity <= 0 ||
+			strings.TrimSpace(foodInput.Unit) == "" {
 			return nil, ErrInvalidDonationData
 		}
 
-		// Convert expiry date from YYYY-MM-DD to time.Time.
 		var expiryDate *time.Time
 
-		if item.ExpiryDate != nil && strings.TrimSpace(*item.ExpiryDate) != "" {
-			parsedDate, err := time.Parse("2006-01-02", strings.TrimSpace(*item.ExpiryDate))
+		if foodInput.ExpiryDate != nil &&
+			strings.TrimSpace(*foodInput.ExpiryDate) != "" {
+			parsedDate, err := time.Parse(
+				"2006-01-02",
+				strings.TrimSpace(*foodInput.ExpiryDate),
+			)
 			if err != nil {
-				return nil, fmt.Errorf("%w: invalid expiry date format", ErrInvalidDonationData)
+				return nil, ErrInvalidDonationData
 			}
-
 			expiryDate = &parsedDate
 		}
 
 		foods = append(foods, model.DonatedFood{
-			FoodName:    foodName,
-			Quantity:    item.Quantity,
-			Unit:        unit,
+			FoodName:    strings.TrimSpace(foodInput.FoodName),
+			Quantity:    foodInput.Quantity,
+			Unit:        strings.TrimSpace(foodInput.Unit),
 			ExpiryDate:  expiryDate,
-			Description: stringToPointer(item.Description),
+			Description: stringToPointer(&foodInput.Description),
 		})
 	}
 
-	// Save donor, request, and foods through the repository.
 	if err := s.repo.Create(ctx, donor, request, foods); err != nil {
 		return nil, err
 	}
 
-	// Retrieve the created request with its relationships.
-	createdRequest, err := s.repo.FindByID(ctx, request.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	return createdRequest, nil
+	return s.repo.FindByID(ctx, request.ID)
 }
 
-// GetByID retrieves a donation request by its ID.
 func (s *donationService) GetByID(
 	ctx context.Context,
 	requestID int32,
 ) (*model.DonationRequest, error) {
-
 	if requestID <= 0 {
 		return nil, ErrInvalidDonationData
 	}
@@ -132,25 +107,22 @@ func (s *donationService) GetByID(
 	return s.repo.FindByID(ctx, requestID)
 }
 
-// GetAll retrieves donation requests with optional status filtering and pagination.
 func (s *donationService) GetAll(
 	ctx context.Context,
 	status string,
 	page, limit int,
 ) ([]model.DonationRequest, int64, error) {
-
-	status = strings.TrimSpace(status)
-
 	if status != "" {
-		switch model.DonationStatus(status) {
-		case model.DonationPending,
-			model.DonationApproved,
-			model.DonationRejected,
-			model.DonationPickupScheduled,
-			model.DonationPickedUp,
-			model.DonationReceived:
-			// Valid status.
-		default:
+		validStatuses := map[string]bool{
+			string(model.DonationPending):         true,
+			string(model.DonationApproved):        true,
+			string(model.DonationRejected):        true,
+			string(model.DonationPickupScheduled): true,
+			string(model.DonationPickedUp):        true,
+			string(model.DonationReceived):        true,
+		}
+
+		if !validStatuses[status] {
 			return nil, 0, ErrInvalidStatus
 		}
 	}
@@ -158,11 +130,9 @@ func (s *donationService) GetAll(
 	if page < 1 {
 		page = 1
 	}
-
 	if limit < 1 {
 		limit = 10
 	}
-
 	if limit > 100 {
 		limit = 100
 	}
@@ -170,54 +140,53 @@ func (s *donationService) GetAll(
 	return s.repo.FindAll(ctx, status, page, limit)
 }
 
-// Review approves or rejects a pending donation request.
 func (s *donationService) Review(
 	ctx context.Context,
 	requestID int32,
 	input dto.ReviewDonationRequest,
-) error {
-
+) (*model.DonationRequest, error) {
 	if requestID <= 0 {
-		return ErrInvalidDonationData
+		return nil, ErrInvalidDonationData
 	}
 
-	var status model.DonationStatus
+	var newStatus model.DonationStatus
 
 	switch input.Status {
 	case dto.ReviewApproved:
-		status = model.DonationApproved
-
+		newStatus = model.DonationApproved
 	case dto.ReviewRejected:
-		status = model.DonationRejected
-
+		newStatus = model.DonationRejected
 	default:
-		return ErrInvalidStatus
+		return nil, ErrInvalidStatus
 	}
 
-	// Retrieve the request before reviewing it.
-	request, err := s.repo.FindByID(ctx, requestID)
+	donation, err := s.repo.FindByID(ctx, requestID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Only pending requests can be reviewed.
-	if request.Status != model.DonationPending {
-		return ErrInvalidTransition
+	if donation.Status != model.DonationPending {
+		return nil, ErrInvalidTransition
 	}
 
-	return s.repo.UpdateStatus(ctx, requestID, status)
+	if err := s.repo.UpdateStatus(ctx, requestID, newStatus); err != nil {
+		return nil, err
+	}
+
+	return s.repo.FindByID(ctx, requestID)
 }
 
-// stringToPointer converts a non-empty string into a string pointer.
-// Empty strings are represented as nil (NULL in the database).
-func stringToPointer(value string) *string {
-	value = strings.TrimSpace(value)
-
-	if value == "" {
+func stringToPointer(value *string) *string {
+	if value == nil {
 		return nil
 	}
 
-	return &value
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+
+	return &trimmed
 }
 
 var _ DonationService = (*donationService)(nil)

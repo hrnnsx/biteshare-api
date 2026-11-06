@@ -19,88 +19,64 @@ type DonationHandler struct {
 func NewDonationHandler(
 	donationService service.DonationService,
 ) *DonationHandler {
-	return &DonationHandler{
-		service: donationService,
-	}
+	return &DonationHandler{service: donationService}
 }
 
-// Create handles POST /donations
 func (h *DonationHandler) Create(c *gin.Context) {
 	var input dto.CreateDonationRequest
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid request body",
-			"error":   err.Error(),
+			"error":   "invalid request body",
+			"details": err.Error(),
 		})
 		return
 	}
 
-	result, err := h.service.Create(c.Request.Context(), input)
+	donation, err := h.service.Create(c.Request.Context(), input)
 	if err != nil {
 		h.handleError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"status":  "success",
-		"message": "Donation request submitted successfully",
-		"data":    result,
+		"message": "donation submitted successfully",
+		"data":    donation,
 	})
 }
 
-// GetByID handles GET /donations/:id
 func (h *DonationHandler) GetByID(c *gin.Context) {
-	requestID, err := strconv.ParseInt(c.Param("id"), 10, 32)
-	if err != nil || requestID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid donation request ID",
-		})
+	requestID, err := parseRequestID(c)
+	if err != nil {
+		h.handleError(c, service.ErrInvalidDonationData)
 		return
 	}
 
-	result, err := h.service.GetByID(
-		c.Request.Context(),
-		int32(requestID),
-	)
+	donation, err := h.service.GetByID(c.Request.Context(), requestID)
 	if err != nil {
 		h.handleError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"data":   result,
-	})
+	c.JSON(http.StatusOK, gin.H{"data": donation})
 }
 
-// GetAll handles GET /donations
 func (h *DonationHandler) GetAll(c *gin.Context) {
-	status := c.Query("status")
-
 	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid page parameter",
-		})
+		h.handleError(c, service.ErrInvalidDonationData)
 		return
 	}
 
 	limit, err := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid limit parameter",
-		})
+		h.handleError(c, service.ErrInvalidDonationData)
 		return
 	}
 
-	result, total, err := h.service.GetAll(
+	donations, total, err := h.service.GetAll(
 		c.Request.Context(),
-		status,
+		c.Query("status"),
 		page,
 		limit,
 	)
@@ -110,8 +86,7 @@ func (h *DonationHandler) GetAll(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"data":   result,
+		"data": donations,
 		"pagination": gin.H{
 			"total": total,
 			"page":  page,
@@ -120,70 +95,58 @@ func (h *DonationHandler) GetAll(c *gin.Context) {
 	})
 }
 
-// Review handles PATCH /donations/:id/review
 func (h *DonationHandler) Review(c *gin.Context) {
-	requestID, err := strconv.ParseInt(c.Param("id"), 10, 32)
-	if err != nil || requestID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid donation request ID",
-		})
+	requestID, err := parseRequestID(c)
+	if err != nil {
+		h.handleError(c, service.ErrInvalidDonationData)
 		return
 	}
 
 	var input dto.ReviewDonationRequest
-
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid request body",
-			"error":   err.Error(),
+			"error":   "invalid request body",
+			"details": err.Error(),
 		})
 		return
 	}
 
-	err = h.service.Review(
-		c.Request.Context(),
-		int32(requestID),
-		input,
-	)
+	donation, err := h.service.Review(c.Request.Context(), requestID, input)
 	if err != nil {
 		h.handleError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":  "success",
-		"message": "Donation request reviewed successfully",
+		"message": "donation reviewed successfully",
+		"data":    donation,
 	})
 }
 
-// handleError converts service/repository errors into HTTP responses.
 func (h *DonationHandler) handleError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, repository.ErrDonationNotFound):
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  "error",
-			"message": "Donation request not found",
-		})
+		c.JSON(http.StatusNotFound, gin.H{"error": "donation request not found"})
 
-	case errors.Is(err, service.ErrInvalidDonationData),
-		errors.Is(err, service.ErrInvalidStatus):
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": err.Error(),
-		})
+	case errors.Is(err, service.ErrInvalidDonationData):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid donation data"})
+
+	case errors.Is(err, service.ErrInvalidStatus):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid donation status"})
 
 	case errors.Is(err, service.ErrInvalidTransition):
-		c.JSON(http.StatusConflict, gin.H{
-			"status":  "error",
-			"message": "Donation request cannot be reviewed in its current status",
-		})
+		c.JSON(http.StatusConflict, gin.H{"error": "invalid donation status transition"})
 
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  "error",
-			"message": "Internal server error",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 	}
+}
+
+func parseRequestID(c *gin.Context) (int32, error) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 32)
+	if err != nil || id <= 0 {
+		return 0, errors.New("invalid request ID")
+	}
+
+	return int32(id), nil
 }
