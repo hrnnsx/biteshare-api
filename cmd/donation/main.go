@@ -37,6 +37,11 @@ func gracefulShutdown(apiServer *http.Server, done chan bool) {
 	done <- true
 }
 
+// @title BiteShare Donation API
+// @version 1.0
+// @description API for managing food donations.
+// @host localhost:8081
+// @BasePath /
 func main() {
 	apiServer := server.NewDonationServer()
 
