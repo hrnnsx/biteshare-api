@@ -23,6 +23,8 @@ tmp/
 
 # .env file
 .env*
+*.env
+aman.env
 !.env.example
 
 # Project build

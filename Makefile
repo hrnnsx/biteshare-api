@@ -4,46 +4,26 @@
 all: build test
 
 build:
-	@echo "Building..."
-	
-	
-	@go build -o main.exe cmd/api/main.go
+	@echo "Building Ecommerce API..."
+	@go build -o bin/ecommerce.exe cmd/ecommerce/main.go
+	@echo "Building Donation API..."
+	@go build -o bin/donation.exe cmd/donation/main.go
 
-# Run the application
-run:
-	@go run cmd/api/main.go
-# Create DB container
-docker-run:
-	@docker compose up --build
+run-ecommerce:
+	@go run cmd/ecommerce/main.go
 
-# Shutdown DB container
-docker-down:
-	@docker compose down
+run-donation:
+	@go run cmd/donation/main.go
 
-# Test the application
+seed-admin:
+	@go run cmd/seed-admin/main.go
+
 test:
 	@echo "Testing..."
 	@go test ./... -v
-# Integrations Tests for the application
-itest:
-	@echo "Running integration tests..."
-	@go test ./internal/database -v
 
-# Clean the binary
 clean:
 	@echo "Cleaning..."
-	@rm -f main
+	@rm -rf bin/
 
-# Live Reload
-watch:
-	@powershell -ExecutionPolicy Bypass -Command "if (Get-Command air -ErrorAction SilentlyContinue) { \
-		air; \
-		Write-Output 'Watching...'; \
-	} else { \
-		Write-Output 'Installing air...'; \
-		go install github.com/air-verse/air@latest; \
-		air; \
-		Write-Output 'Watching...'; \
-	}"
-
-.PHONY: all build run test clean watch docker-run docker-down itest
+.PHONY: all build run-ecommerce run-donation seed-admin test clean
