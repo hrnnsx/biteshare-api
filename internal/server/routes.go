@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"biteshare-api/internal/auth"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -27,6 +28,8 @@ func (s *Server) RegisterRoutes() http.Handler {
 
 	// Admin listing requires a valid bearer token with the admin role.
 	r.GET("/admins", auth.RequireAdmin(s.jwtManager), s.listAdminsHandler)
+
+	r.POST("/payments/webhook", s.paymentWebhookHandler)
 
 	return r
 }
