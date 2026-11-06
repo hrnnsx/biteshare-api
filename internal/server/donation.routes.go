@@ -100,6 +100,14 @@ func (s *DonationServer) RegisterDonationRoutes() http.Handler {
 	return r
 }
 
+// DonationHelloWorldHandler checks whether the Donation API is running.
+//
+// @Summary Donation API welcome endpoint
+// @Description Returns a message indicating that the Donation API is running.
+// @Tags System
+// @Produce json
+// @Success 200 {object} map[string]interface{} "Donation API is running"
+// @Router / [get]
 // DonationHelloWorldHandler handles the root endpoint.
 func (s *DonationServer) DonationHelloWorldHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
@@ -107,6 +115,14 @@ func (s *DonationServer) DonationHelloWorldHandler(c *gin.Context) {
 	})
 }
 
+// donationHealthHandler checks the Donation API database connection health.
+//
+// @Summary Donation API health check
+// @Description Returns database connection health information.
+// @Tags System
+// @Produce json
+// @Success 200 {object} map[string]interface{} "Health status"
+// @Router /health [get]
 // donationHealthHandler handles the health check endpoint.
 func (s *DonationServer) donationHealthHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, s.db.Health())

@@ -30,6 +30,22 @@ func NewDonationHandler(
 	}
 }
 
+// Create handles a new food donation submission.
+//
+// @Summary Submit a food donation
+// @Description Submit a donation request containing donor information and one or more food items. Each food item must include at least one image. Images are uploaded to ImageKit.
+// @Tags Donations
+// @Accept multipart/form-data
+// @Produce json
+// @Param payload formData string true "Donation information in JSON format"
+// @Param foods[0].images formData file true "Food item image. Use the corresponding index for each food item; at least one image is required per item."
+// @Success 201 {object} map[string]interface{} "Donation submitted successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid payload or missing food image"
+// @Failure 413 {object} map[string]interface{} "Request or image exceeds size limit"
+// @Failure 415 {object} map[string]interface{} "Content type must be multipart/form-data"
+// @Failure 502 {object} map[string]interface{} "Image upload failed"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/donations [post]
 func (h *DonationHandler) Create(c *gin.Context) {
 	contentType := c.GetHeader("Content-Type")
 
@@ -131,6 +147,20 @@ func (h *DonationHandler) Create(c *gin.Context) {
 	})
 }
 
+// GetByID retrieves a donation request by its ID.
+//
+// @Summary Get donation details
+// @Description Retrieve complete information about a donation request, including donor, donated foods, images, and pickup schedules.
+// @Tags Donations
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "Donation request ID"
+// @Success 200 {object} map[string]interface{} "Donation details"
+// @Failure 400 {object} map[string]interface{} "Invalid donation ID"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Donation request not found"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/donations/{id} [get]
 func (h *DonationHandler) GetByID(c *gin.Context) {
 	requestID, err := parseRequestID(c)
 	if err != nil {
@@ -147,6 +177,21 @@ func (h *DonationHandler) GetByID(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": donation})
 }
 
+// GetAll retrieves a paginated list of donation requests.
+//
+// @Summary Get all donations
+// @Description Retrieve donation requests with optional status filtering and pagination.
+// @Tags Donations
+// @Produce json
+// @Security BearerAuth
+// @Param status query string false "Filter by donation status" Enums(pending,approved,rejected,pickup_scheduled,picked_up,received)
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Number of records per page" default(10)
+// @Success 200 {object} map[string]interface{} "Donation list and pagination information"
+// @Failure 400 {object} map[string]interface{} "Invalid query parameters"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/donations [get]
 func (h *DonationHandler) GetAll(c *gin.Context) {
 	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if err != nil {
@@ -181,6 +226,23 @@ func (h *DonationHandler) GetAll(c *gin.Context) {
 	})
 }
 
+// Review approves or rejects a donation request.
+//
+// @Summary Review a donation request
+// @Description Admin reviews a pending donation request and changes its status to approved or rejected.
+// @Tags Donations
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "Donation request ID"
+// @Param request body dto.ReviewDonationRequest true "Donation review information"
+// @Success 200 {object} map[string]interface{} "Donation reviewed successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request body or status"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Donation request not found"
+// @Failure 409 {object} map[string]interface{} "Invalid donation status transition"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/donations/{id}/review [patch]
 func (h *DonationHandler) Review(c *gin.Context) {
 	requestID, err := parseRequestID(c)
 	if err != nil {

@@ -22,6 +22,23 @@ func NewPickupScheduleHandler(
 	return &PickupScheduleHandler{service: pickupScheduleService}
 }
 
+// SchedulePickup creates a pickup schedule for an approved donation.
+//
+// @Summary Schedule a donation pickup
+// @Description Admin schedules the pickup date and time for an approved donation request. The donor receives an email notification after the schedule is successfully created.
+// @Tags Pickup Schedules
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "Donation request ID"
+// @Param request body dto.CreatePickupScheduleRequest true "Pickup schedule information"
+// @Success 201 {object} map[string]interface{} "Pickup scheduled successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request body or schedule data"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Donation request not found"
+// @Failure 409 {object} map[string]interface{} "Donation must be approved before scheduling pickup"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /api/v1/donations/{id}/schedules [post]
 func (h *PickupScheduleHandler) SchedulePickup(c *gin.Context) {
 	requestID, err := parseRequestID(c)
 	if err != nil {
