@@ -1,0 +1,19 @@
+DROP INDEX IF EXISTS uq_product_images_one_primary;
+DROP INDEX IF EXISTS idx_payments_order_id;
+DROP INDEX IF EXISTS idx_order_items_product_id;
+DROP INDEX IF EXISTS idx_order_items_order_id;
+DROP INDEX IF EXISTS idx_orders_status;
+DROP INDEX IF EXISTS idx_orders_buyer_id;
+DROP INDEX IF EXISTS idx_product_images_product_id;
+DROP INDEX IF EXISTS idx_food_products_status;
+DROP INDEX IF EXISTS idx_food_products_supplier_id;
+DROP INDEX IF EXISTS idx_food_products_admin_id;
+
+DROP TABLE IF EXISTS deliveries;
+DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS order_items;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS product_images;
+DROP TABLE IF EXISTS food_products;
+DROP TABLE IF EXISTS food_suppliers;
+DROP TABLE IF EXISTS buyers;
