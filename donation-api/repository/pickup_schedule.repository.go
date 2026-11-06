@@ -44,9 +44,10 @@ func (r *pickupScheduleRepository) CreateSchedule(
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var donation model.DonationRequest
 
-		// Lock the donation request to prevent concurrent scheduling.
+		// Lock the donation request and load donor information.
 		err := tx.
 			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Donor").
 			First(&donation, "request_id = ?", schedule.RequestID).
 			Error
 
@@ -75,6 +76,11 @@ func (r *pickupScheduleRepository) CreateSchedule(
 			Error; err != nil {
 			return err
 		}
+
+		// Attach donation and donor information for the service.
+		// This assignment happens after Create, so GORM will not
+		// attempt to insert the existing donation as a new record.
+		schedule.Request = donation
 
 		return nil
 	})

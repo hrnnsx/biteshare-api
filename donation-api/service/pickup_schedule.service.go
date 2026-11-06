@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
 	"biteshare-api/donation-api/dto"
 	"biteshare-api/donation-api/model"
 	"biteshare-api/donation-api/repository"
+	"biteshare-api/internal/mailer"
 )
 
 var (
@@ -26,13 +28,18 @@ type PickupScheduleService interface {
 }
 
 type pickupScheduleService struct {
-	repo repository.PickupScheduleRepository
+	repo   repository.PickupScheduleRepository
+	mailer mailer.Mailer
 }
 
 func NewPickupScheduleService(
 	repo repository.PickupScheduleRepository,
+	emailMailer mailer.Mailer,
 ) PickupScheduleService {
-	return &pickupScheduleService{repo: repo}
+	return &pickupScheduleService{
+		repo:   repo,
+		mailer: emailMailer,
+	}
 }
 
 func (s *pickupScheduleService) SchedulePickup(
@@ -72,8 +79,28 @@ func (s *pickupScheduleService) SchedulePickup(
 		CreatedAt:  time.Now(),
 	}
 
+	// Save schedule and update donation status.
 	if err := s.repo.CreateSchedule(ctx, schedule); err != nil {
 		return nil, err
+	}
+
+	// Send email after the database transaction succeeds.
+	if s.mailer != nil {
+		donor := schedule.Request.Donor
+
+		if err := s.mailer.SendPickupScheduledEmail(
+			donor.Email,
+			donor.Name,
+			requestID,
+			schedule.PickupDate,
+			schedule.PickupTime,
+		); err != nil {
+			log.Printf(
+				"[PickupScheduleService] Failed to send scheduling email for request #%d: %v",
+				requestID,
+				err,
+			)
+		}
 	}
 
 	return schedule, nil

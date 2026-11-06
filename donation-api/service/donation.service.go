@@ -15,6 +15,7 @@ import (
 	"biteshare-api/donation-api/model"
 	"biteshare-api/donation-api/repository"
 	"biteshare-api/internal/imagekit"
+	"biteshare-api/internal/mailer"
 )
 
 var (
@@ -53,7 +54,10 @@ type DonationService interface {
 		foodImages [][]*multipart.FileHeader,
 	) (*model.DonationRequest, error)
 
-	GetByID(ctx context.Context, requestID int32) (*model.DonationRequest, error)
+	GetByID(
+		ctx context.Context,
+		requestID int32,
+	) (*model.DonationRequest, error)
 
 	GetAll(
 		ctx context.Context,
@@ -71,18 +75,22 @@ type DonationService interface {
 type donationService struct {
 	repo       repository.DonationRepository
 	imageStore ImageStorage
+	mailer     mailer.Mailer
 }
 
 func NewDonationService(
 	repo repository.DonationRepository,
 	imageStore ImageStorage,
+	emailMailer mailer.Mailer,
 ) DonationService {
 	return &donationService{
 		repo:       repo,
 		imageStore: imageStore,
+		mailer:     emailMailer,
 	}
 }
 
+// Create creates a donation request and uploads its food images.
 func (s *donationService) Create(
 	ctx context.Context,
 	input dto.CreateDonationRequest,
@@ -119,6 +127,7 @@ func (s *donationService) Create(
 
 	foods := make([]model.DonatedFood, 0, len(input.Foods))
 
+	// Validate food data before uploading any images.
 	for i, foodInput := range input.Foods {
 		if strings.TrimSpace(foodInput.FoodName) == "" ||
 			foodInput.Quantity <= 0 ||
@@ -154,13 +163,14 @@ func (s *donationService) Create(
 		})
 	}
 
-	// Upload all food images before creating database records.
+	// Track uploaded files for cleanup if the database transaction fails.
 	var uploadedFileIDs []string
 
 	cleanup := func() {
 		s.cleanupUploadedImages(ctx, uploadedFileIDs)
 	}
 
+	// Upload all food images to ImageKit.
 	for foodIndex, files := range foodImages {
 		for imageIndex, fileHeader := range files {
 			contentType, err := validateImageFile(fileHeader)
@@ -175,7 +185,11 @@ func (s *donationService) Create(
 				return nil, fmt.Errorf("%w: %v", ErrInvalidImage, err)
 			}
 
-			fileName := imageFileName(foodIndex, imageIndex, contentType)
+			fileName := imageFileName(
+				foodIndex,
+				imageIndex,
+				contentType,
+			)
 
 			uploaded, uploadErr := s.imageStore.Upload(
 				ctx,
@@ -187,25 +201,37 @@ func (s *donationService) Create(
 
 			closeErr := file.Close()
 
+			// Track partial uploads too, so they can be cleaned up.
+			if uploaded != nil && uploaded.FileID != "" {
+				uploadedFileIDs = append(
+					uploadedFileIDs,
+					uploaded.FileID,
+				)
+			}
+
 			if uploadErr != nil {
 				cleanup()
-				return nil, fmt.Errorf("%w: %v", ErrImageUploadFailed, uploadErr)
+				return nil, fmt.Errorf(
+					"%w: %v",
+					ErrImageUploadFailed,
+					uploadErr,
+				)
 			}
 
 			if closeErr != nil {
-				if uploaded != nil && uploaded.FileID != "" {
-					uploadedFileIDs = append(uploadedFileIDs, uploaded.FileID)
-				}
 				cleanup()
-				return nil, fmt.Errorf("close uploaded image: %w", closeErr)
+				return nil, fmt.Errorf(
+					"close uploaded image: %w",
+					closeErr,
+				)
 			}
 
-			if uploaded == nil || uploaded.FileID == "" || uploaded.URL == "" {
+			if uploaded == nil ||
+				uploaded.FileID == "" ||
+				uploaded.URL == "" {
 				cleanup()
 				return nil, ErrImageUploadFailed
 			}
-
-			uploadedFileIDs = append(uploadedFileIDs, uploaded.FileID)
 
 			fileID := uploaded.FileID
 
@@ -227,12 +253,31 @@ func (s *donationService) Create(
 		return nil, err
 	}
 
-	// Do not delete uploaded files if this read fails:
-	// the database transaction has already succeeded.
+	// Send confirmation email after the database transaction succeeds.
+	// Email failure must not invalidate the donation.
+	if s.mailer != nil {
+		if err := s.mailer.SendDonationSubmittedEmail(
+			donor.Email,
+			donor.Name,
+			request.ID,
+		); err != nil {
+			log.Printf(
+				"[DonationService] Failed to send submission email for request #%d: %v",
+				request.ID,
+				err,
+			)
+		}
+	}
+
+	// The database transaction has succeeded.
+	// Do not delete uploaded files if this read fails.
 	return s.repo.FindByID(ctx, request.ID)
 }
 
-func validateImageFile(fileHeader *multipart.FileHeader) (string, error) {
+// validateImageFile checks image size and actual MIME type.
+func validateImageFile(
+	fileHeader *multipart.FileHeader,
+) (string, error) {
 	if fileHeader == nil || fileHeader.Size <= 0 {
 		return "", ErrInvalidImage
 	}
@@ -264,7 +309,11 @@ func validateImageFile(fileHeader *multipart.FileHeader) (string, error) {
 	}
 }
 
-func imageFileName(foodIndex, imageIndex int, contentType string) string {
+// imageFileName generates a unique logical filename for each food image.
+func imageFileName(
+	foodIndex, imageIndex int,
+	contentType string,
+) string {
 	extension := ".jpg"
 
 	switch contentType {
@@ -282,11 +331,12 @@ func imageFileName(foodIndex, imageIndex int, contentType string) string {
 	)
 }
 
+// cleanupUploadedImages deletes ImageKit files when DB persistence fails.
 func (s *donationService) cleanupUploadedImages(
 	ctx context.Context,
 	fileIDs []string,
 ) {
-	if len(fileIDs) == 0 {
+	if len(fileIDs) == 0 || s.imageStore == nil {
 		return
 	}
 
@@ -300,7 +350,7 @@ func (s *donationService) cleanupUploadedImages(
 	for _, fileID := range fileIDs {
 		if err := s.imageStore.Delete(cleanupCtx, fileID); err != nil {
 			log.Printf(
-				"failed to cleanup ImageKit file %s: %v",
+				"[DonationService] Failed to cleanup ImageKit file %s: %v",
 				fileID,
 				err,
 			)
@@ -342,9 +392,11 @@ func (s *donationService) GetAll(
 	if page < 1 {
 		page = 1
 	}
+
 	if limit < 1 {
 		limit = 10
 	}
+
 	if limit > 100 {
 		limit = 100
 	}
@@ -372,6 +424,7 @@ func (s *donationService) Review(
 		return nil, ErrInvalidStatus
 	}
 
+	// Fetch donation with donor information.
 	donation, err := s.repo.FindByID(ctx, requestID)
 	if err != nil {
 		return nil, err
@@ -381,8 +434,31 @@ func (s *donationService) Review(
 		return nil, ErrInvalidTransition
 	}
 
+	// Update database first.
 	if err := s.repo.UpdateStatus(ctx, requestID, newStatus); err != nil {
 		return nil, err
+	}
+
+	// Send notification after the status update succeeds.
+	if s.mailer != nil {
+		statusLabel := "Disetujui"
+
+		if newStatus == model.DonationRejected {
+			statusLabel = "Ditolak"
+		}
+
+		if err := s.mailer.SendDonationStatusEmail(
+			donation.Donor.Email,
+			donation.Donor.Name,
+			statusLabel,
+			"",
+		); err != nil {
+			log.Printf(
+				"[DonationService] Failed to send status email for request #%d: %v",
+				requestID,
+				err,
+			)
+		}
 	}
 
 	return s.repo.FindByID(ctx, requestID)
