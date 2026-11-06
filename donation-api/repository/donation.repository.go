@@ -9,12 +9,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// Repository errors
 var (
 	ErrDonationNotFound = errors.New("donation request not found")
 )
 
-// DonationRepository defines donation database operations.
 type DonationRepository interface {
 	Create(
 		ctx context.Context,
@@ -42,61 +40,66 @@ type DonationRepository interface {
 	) error
 }
 
-// donationRepository implements DonationRepository using GORM.
 type donationRepository struct {
 	db *gorm.DB
 }
 
-// NewDonationRepository creates a new donation repository.
 func NewDonationRepository(db *gorm.DB) DonationRepository {
 	return &donationRepository{
 		db: db,
 	}
 }
 
-// Create stores donor, donation request, and donated foods.
-// All operations are executed within one database transaction.
+// Create stores donor, donation request, donated foods,
+// and their image metadata in one database transaction.
 func (r *donationRepository) Create(
 	ctx context.Context,
 	donor *model.Donor,
 	request *model.DonationRequest,
 	foods []model.DonatedFood,
 ) error {
-
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-
-		// Create donor
 		if err := tx.Create(donor).Error; err != nil {
 			return err
 		}
 
-		// Assign donor ID to donation request
 		request.DonorID = donor.ID
 
-		// Create donation request
 		if err := tx.Create(request).Error; err != nil {
 			return err
 		}
 
-		// Create donated foods
 		for i := range foods {
 			foods[i].RequestID = request.ID
+
+			// Keep images temporarily before creating the food.
+			images := foods[i].Images
+			foods[i].Images = nil
 
 			if err := tx.Create(&foods[i]).Error; err != nil {
 				return err
 			}
+
+			// The food ID is now available.
+			for j := range images {
+				images[j].FoodID = foods[i].ID
+
+				if err := tx.Create(&images[j]).Error; err != nil {
+					return err
+				}
+			}
+
+			foods[i].Images = images
 		}
 
 		return nil
 	})
 }
 
-// FindByID retrieves a donation request and its related data.
 func (r *donationRepository) FindByID(
 	ctx context.Context,
 	requestID int32,
 ) (*model.DonationRequest, error) {
-
 	var donation model.DonationRequest
 
 	err := r.db.WithContext(ctx).
@@ -119,31 +122,26 @@ func (r *donationRepository) FindByID(
 	return &donation, nil
 }
 
-// FindAll retrieves donation requests with optional status filtering and pagination.
 func (r *donationRepository) FindAll(
 	ctx context.Context,
 	status string,
 	page int,
 	limit int,
 ) ([]model.DonationRequest, int64, error) {
-
 	var donations []model.DonationRequest
 	var total int64
 
 	query := r.db.WithContext(ctx).
 		Model(&model.DonationRequest{})
 
-	// Apply status filter when provided.
 	if status != "" {
 		query = query.Where("status = ?", status)
 	}
 
-	// Count matching records.
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// Apply pagination defaults.
 	if page < 1 {
 		page = 1
 	}
@@ -154,10 +152,10 @@ func (r *donationRepository) FindAll(
 
 	offset := (page - 1) * limit
 
-	// Retrieve donation requests.
 	err := query.
 		Preload("Donor").
 		Preload("Foods").
+		Preload("Foods.Images").
 		Order("submitted_at DESC").
 		Limit(limit).
 		Offset(offset).
@@ -171,13 +169,11 @@ func (r *donationRepository) FindAll(
 	return donations, total, nil
 }
 
-// UpdateStatus changes the status of a donation request.
 func (r *donationRepository) UpdateStatus(
 	ctx context.Context,
 	requestID int32,
 	status model.DonationStatus,
 ) error {
-
 	result := r.db.WithContext(ctx).
 		Model(&model.DonationRequest{}).
 		Where("request_id = ?", requestID).
@@ -194,5 +190,4 @@ func (r *donationRepository) UpdateStatus(
 	return nil
 }
 
-// Compile-time interface implementation check.
 var _ DonationRepository = (*donationRepository)(nil)

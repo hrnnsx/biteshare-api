@@ -49,6 +49,7 @@ func main() {
 		panic(fmt.Sprintf("http server error: %s", err))
 	}
 
+	// Wait for graceful shutdown to complete.
 	<-done
 	log.Println("Graceful shutdown complete.")
 }

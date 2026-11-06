@@ -1,9 +1,13 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"biteshare-api/donation-api/dto"
 	"biteshare-api/donation-api/repository"
@@ -11,6 +15,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+const maxDonationRequestSize = 50 << 20 // 50 MB
 
 type DonationHandler struct {
 	service service.DonationService
@@ -24,83 +30,139 @@ func NewDonationHandler(
 	}
 }
 
-// Create handles POST /donations
 func (h *DonationHandler) Create(c *gin.Context) {
-	var input dto.CreateDonationRequest
+	contentType := c.GetHeader("Content-Type")
 
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid request body",
-			"error":   err.Error(),
+	if !strings.HasPrefix(contentType, "multipart/form-data") {
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{
+			"error": "content type must be multipart/form-data",
 		})
 		return
 	}
 
-	result, err := h.service.Create(c.Request.Context(), input)
+	c.Request.Body = http.MaxBytesReader(
+		c.Writer,
+		c.Request.Body,
+		maxDonationRequestSize,
+	)
+
+	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
+		var maxBytesErr *http.MaxBytesError
+
+		if errors.As(err, &maxBytesErr) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+				"error": "donation request exceeds maximum size of 50 MB",
+			})
+			return
+		}
+
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "invalid multipart request",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	if c.Request.MultipartForm != nil {
+		defer c.Request.MultipartForm.RemoveAll()
+	}
+
+	// Read JSON payload.
+	payload := c.PostForm("payload")
+
+	if payload == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "payload field is required",
+		})
+		return
+	}
+
+	var input dto.CreateDonationRequest
+
+	if err := json.Unmarshal([]byte(payload), &input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "invalid donation payload",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	if len(input.Foods) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "at least one food item is required",
+		})
+		return
+	}
+
+	form := c.Request.MultipartForm
+
+	foodImages := make([][]*multipart.FileHeader, len(input.Foods))
+
+	for i := range input.Foods {
+		fieldName := fmt.Sprintf("foods[%d].images", i)
+
+		foodImages[i] = form.File[fieldName]
+
+		if len(foodImages[i]) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf(
+					"at least one image is required for food item %d",
+					i+1,
+				),
+			})
+			return
+		}
+	}
+
+	donation, err := h.service.Create(
+		c.Request.Context(),
+		input,
+		foodImages,
+	)
+
 	if err != nil {
 		h.handleError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"status":  "success",
-		"message": "Donation request submitted successfully",
-		"data":    result,
+		"message": "donation submitted successfully",
+		"data":    donation,
 	})
 }
 
-// GetByID handles GET /donations/:id
 func (h *DonationHandler) GetByID(c *gin.Context) {
-	requestID, err := strconv.ParseInt(c.Param("id"), 10, 32)
-	if err != nil || requestID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid donation request ID",
-		})
+	requestID, err := parseRequestID(c)
+	if err != nil {
+		h.handleError(c, service.ErrInvalidDonationData)
 		return
 	}
 
-	result, err := h.service.GetByID(
-		c.Request.Context(),
-		int32(requestID),
-	)
+	donation, err := h.service.GetByID(c.Request.Context(), requestID)
 	if err != nil {
 		h.handleError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"data":   result,
-	})
+	c.JSON(http.StatusOK, gin.H{"data": donation})
 }
 
-// GetAll handles GET /donations
 func (h *DonationHandler) GetAll(c *gin.Context) {
-	status := c.Query("status")
-
 	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid page parameter",
-		})
+		h.handleError(c, service.ErrInvalidDonationData)
 		return
 	}
 
 	limit, err := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid limit parameter",
-		})
+		h.handleError(c, service.ErrInvalidDonationData)
 		return
 	}
 
-	result, total, err := h.service.GetAll(
+	donations, total, err := h.service.GetAll(
 		c.Request.Context(),
-		status,
+		c.Query("status"),
 		page,
 		limit,
 	)
@@ -110,8 +172,7 @@ func (h *DonationHandler) GetAll(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"data":   result,
+		"data": donations,
 		"pagination": gin.H{
 			"total": total,
 			"page":  page,
@@ -120,14 +181,10 @@ func (h *DonationHandler) GetAll(c *gin.Context) {
 	})
 }
 
-// Review handles PATCH /donations/:id/review
 func (h *DonationHandler) Review(c *gin.Context) {
-	requestID, err := strconv.ParseInt(c.Param("id"), 10, 32)
-	if err != nil || requestID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid donation request ID",
-		})
+	requestID, err := parseRequestID(c)
+	if err != nil {
+		h.handleError(c, service.ErrInvalidDonationData)
 		return
 	}
 
@@ -135,16 +192,15 @@ func (h *DonationHandler) Review(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": "Invalid request body",
-			"error":   err.Error(),
+			"error":   "invalid request body",
+			"details": err.Error(),
 		})
 		return
 	}
 
-	err = h.service.Review(
+	donation, err := h.service.Review(
 		c.Request.Context(),
-		int32(requestID),
+		requestID,
 		input,
 	)
 	if err != nil {
@@ -153,37 +209,70 @@ func (h *DonationHandler) Review(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":  "success",
-		"message": "Donation request reviewed successfully",
+		"message": "donation reviewed successfully",
+		"data":    donation,
 	})
 }
 
-// handleError converts service/repository errors into HTTP responses.
 func (h *DonationHandler) handleError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, repository.ErrDonationNotFound):
 		c.JSON(http.StatusNotFound, gin.H{
-			"status":  "error",
-			"message": "Donation request not found",
+			"error": "donation request not found",
 		})
 
-	case errors.Is(err, service.ErrInvalidDonationData),
-		errors.Is(err, service.ErrInvalidStatus):
+	case errors.Is(err, service.ErrInvalidDonationData):
 		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  "error",
-			"message": err.Error(),
+			"error": "invalid donation data",
+		})
+
+	case errors.Is(err, service.ErrInvalidStatus):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid donation status",
 		})
 
 	case errors.Is(err, service.ErrInvalidTransition):
 		c.JSON(http.StatusConflict, gin.H{
-			"status":  "error",
-			"message": "Donation request cannot be reviewed in its current status",
+			"error": "invalid donation status transition",
+		})
+
+	case errors.Is(err, service.ErrMissingFoodImage):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "every food item must have at least one image",
+		})
+
+	case errors.Is(err, service.ErrInvalidImage):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid image file",
+		})
+
+	case errors.Is(err, service.ErrInvalidImageType):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "only JPEG, PNG, and WebP images are allowed",
+		})
+
+	case errors.Is(err, service.ErrImageTooLarge):
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"error": "each image must not exceed 5 MB",
+		})
+
+	case errors.Is(err, service.ErrImageUploadFailed):
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error": "failed to upload image to storage provider",
 		})
 
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  "error",
-			"message": "Internal server error",
+			"error": "internal server error",
 		})
 	}
+}
+
+func parseRequestID(c *gin.Context) (int32, error) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 32)
+	if err != nil || id <= 0 {
+		return 0, errors.New("invalid request ID")
+	}
+
+	return int32(id), nil
 }

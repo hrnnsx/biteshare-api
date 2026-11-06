@@ -4,58 +4,114 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
+	"io"
+	"log"
+	"mime/multipart"
+	"net/http"
 	"strings"
 	"time"
 
 	"biteshare-api/donation-api/dto"
 	"biteshare-api/donation-api/model"
 	"biteshare-api/donation-api/repository"
+	"biteshare-api/internal/imagekit"
+	"biteshare-api/internal/mailer"
 )
 
 var (
 	ErrInvalidDonationData = errors.New("invalid donation data")
 	ErrInvalidStatus       = errors.New("invalid donation status")
 	ErrInvalidTransition   = errors.New("invalid donation status transition")
+
+	ErrMissingFoodImage  = errors.New("each donated food must have at least one image")
+	ErrInvalidImage      = errors.New("invalid image file")
+	ErrInvalidImageType  = errors.New("unsupported image type")
+	ErrImageTooLarge     = errors.New("image exceeds maximum size of 5 MB")
+	ErrImageUploadFailed = errors.New("image upload failed")
 )
 
+const (
+	maxImageSize = 5 << 20 // 5 MB
+	imageFolder  = "BiteShare/donations/food-images"
+)
+
+type ImageStorage interface {
+	Upload(
+		ctx context.Context,
+		file io.Reader,
+		fileName string,
+		contentType string,
+		folder string,
+	) (*imagekit.UploadedFile, error)
+
+	Delete(ctx context.Context, fileID string) error
+}
+
 type DonationService interface {
-	Create(ctx context.Context, input dto.CreateDonationRequest) (*model.DonationRequest, error)
-	GetByID(ctx context.Context, requestID int32) (*model.DonationRequest, error)
-	GetAll(ctx context.Context, status string, page, limit int) ([]model.DonationRequest, int64, error)
-	Review(ctx context.Context, requestID int32, input dto.ReviewDonationRequest) error
+	Create(
+		ctx context.Context,
+		input dto.CreateDonationRequest,
+		foodImages [][]*multipart.FileHeader,
+	) (*model.DonationRequest, error)
+
+	GetByID(
+		ctx context.Context,
+		requestID int32,
+	) (*model.DonationRequest, error)
+
+	GetAll(
+		ctx context.Context,
+		status string,
+		page, limit int,
+	) ([]model.DonationRequest, int64, error)
+
+	Review(
+		ctx context.Context,
+		requestID int32,
+		input dto.ReviewDonationRequest,
+	) (*model.DonationRequest, error)
 }
 
 type donationService struct {
-	repo repository.DonationRepository
+	repo       repository.DonationRepository
+	imageStore ImageStorage
+	mailer     mailer.Mailer
 }
 
-func NewDonationService(repo repository.DonationRepository) DonationService {
+func NewDonationService(
+	repo repository.DonationRepository,
+	imageStore ImageStorage,
+	emailMailer mailer.Mailer,
+) DonationService {
 	return &donationService{
-		repo: repo,
+		repo:       repo,
+		imageStore: imageStore,
+		mailer:     emailMailer,
 	}
 }
 
-// Create creates a new donation request along with its donor and donated foods.
+// Create creates a donation request and uploads its food images.
 func (s *donationService) Create(
 	ctx context.Context,
 	input dto.CreateDonationRequest,
+	foodImages [][]*multipart.FileHeader,
 ) (*model.DonationRequest, error) {
-
-	// Validate donor information.
 	if strings.TrimSpace(input.Donor.Name) == "" ||
 		strings.TrimSpace(input.Donor.Email) == "" ||
 		strings.TrimSpace(input.Donor.Phone) == "" ||
-		strings.TrimSpace(input.Donor.Address) == "" {
+		strings.TrimSpace(input.Donor.Address) == "" ||
+		len(input.Foods) == 0 {
 		return nil, ErrInvalidDonationData
 	}
 
-	// A donation request must contain at least one food item.
-	if len(input.Foods) == 0 {
-		return nil, ErrInvalidDonationData
+	if s.imageStore == nil {
+		return nil, ErrImageUploadFailed
 	}
 
-	// Convert donor DTO into donor model.
+	if len(foodImages) != len(input.Foods) {
+		return nil, ErrMissingFoodImage
+	}
+
 	donor := &model.Donor{
 		Name:    strings.TrimSpace(input.Donor.Name),
 		Email:   strings.TrimSpace(input.Donor.Email),
@@ -63,68 +119,249 @@ func (s *donationService) Create(
 		Address: strings.TrimSpace(input.Donor.Address),
 	}
 
-	// Create donation request model.
 	request := &model.DonationRequest{
 		Status:      model.DonationPending,
-		Notes:       input.Notes,
+		Notes:       stringToPointer(input.Notes),
 		SubmittedAt: time.Now(),
 	}
 
-	// Convert food DTOs into food models.
 	foods := make([]model.DonatedFood, 0, len(input.Foods))
 
-	for _, item := range input.Foods {
-		foodName := strings.TrimSpace(item.FoodName)
-		unit := strings.TrimSpace(item.Unit)
-
-		if foodName == "" || unit == "" ||
-			math.IsNaN(item.Quantity) ||
-			math.IsInf(item.Quantity, 0) ||
-			item.Quantity <= 0 {
+	// Validate food data before uploading any images.
+	for i, foodInput := range input.Foods {
+		if strings.TrimSpace(foodInput.FoodName) == "" ||
+			foodInput.Quantity <= 0 ||
+			strings.TrimSpace(foodInput.Unit) == "" {
 			return nil, ErrInvalidDonationData
 		}
 
-		// Convert expiry date from YYYY-MM-DD to time.Time.
+		if len(foodImages[i]) == 0 {
+			return nil, ErrMissingFoodImage
+		}
+
 		var expiryDate *time.Time
 
-		if item.ExpiryDate != nil && strings.TrimSpace(*item.ExpiryDate) != "" {
-			parsedDate, err := time.Parse("2006-01-02", strings.TrimSpace(*item.ExpiryDate))
+		if foodInput.ExpiryDate != nil &&
+			strings.TrimSpace(*foodInput.ExpiryDate) != "" {
+			parsedDate, err := time.Parse(
+				"2006-01-02",
+				strings.TrimSpace(*foodInput.ExpiryDate),
+			)
 			if err != nil {
-				return nil, fmt.Errorf("%w: invalid expiry date format", ErrInvalidDonationData)
+				return nil, ErrInvalidDonationData
 			}
 
 			expiryDate = &parsedDate
 		}
 
 		foods = append(foods, model.DonatedFood{
-			FoodName:    foodName,
-			Quantity:    item.Quantity,
-			Unit:        unit,
+			FoodName:    strings.TrimSpace(foodInput.FoodName),
+			Quantity:    foodInput.Quantity,
+			Unit:        strings.TrimSpace(foodInput.Unit),
 			ExpiryDate:  expiryDate,
-			Description: stringToPointer(item.Description),
+			Description: stringToPointer(&foodInput.Description),
 		})
 	}
 
-	// Save donor, request, and foods through the repository.
+	// Track uploaded files for cleanup if the database transaction fails.
+	var uploadedFileIDs []string
+
+	cleanup := func() {
+		s.cleanupUploadedImages(ctx, uploadedFileIDs)
+	}
+
+	// Upload all food images to ImageKit.
+	for foodIndex, files := range foodImages {
+		for imageIndex, fileHeader := range files {
+			contentType, err := validateImageFile(fileHeader)
+			if err != nil {
+				cleanup()
+				return nil, err
+			}
+
+			file, err := fileHeader.Open()
+			if err != nil {
+				cleanup()
+				return nil, fmt.Errorf("%w: %v", ErrInvalidImage, err)
+			}
+
+			fileName := imageFileName(
+				foodIndex,
+				imageIndex,
+				contentType,
+			)
+
+			uploaded, uploadErr := s.imageStore.Upload(
+				ctx,
+				file,
+				fileName,
+				contentType,
+				imageFolder,
+			)
+
+			closeErr := file.Close()
+
+			// Track partial uploads too, so they can be cleaned up.
+			if uploaded != nil && uploaded.FileID != "" {
+				uploadedFileIDs = append(
+					uploadedFileIDs,
+					uploaded.FileID,
+				)
+			}
+
+			if uploadErr != nil {
+				cleanup()
+				return nil, fmt.Errorf(
+					"%w: %v",
+					ErrImageUploadFailed,
+					uploadErr,
+				)
+			}
+
+			if closeErr != nil {
+				cleanup()
+				return nil, fmt.Errorf(
+					"close uploaded image: %w",
+					closeErr,
+				)
+			}
+
+			if uploaded == nil ||
+				uploaded.FileID == "" ||
+				uploaded.URL == "" {
+				cleanup()
+				return nil, ErrImageUploadFailed
+			}
+
+			fileID := uploaded.FileID
+
+			foods[foodIndex].Images = append(
+				foods[foodIndex].Images,
+				model.DonationImage{
+					ImageURL:  uploaded.URL,
+					FileID:    &fileID,
+					IsPrimary: imageIndex == 0,
+					CreatedAt: time.Now(),
+				},
+			)
+		}
+	}
+
+	// Save donor, request, foods, and image metadata in one DB transaction.
 	if err := s.repo.Create(ctx, donor, request, foods); err != nil {
+		cleanup()
 		return nil, err
 	}
 
-	// Retrieve the created request with its relationships.
-	createdRequest, err := s.repo.FindByID(ctx, request.ID)
-	if err != nil {
-		return nil, err
+	// Send confirmation email after the database transaction succeeds.
+	// Email failure must not invalidate the donation.
+	if s.mailer != nil {
+		if err := s.mailer.SendDonationSubmittedEmail(
+			donor.Email,
+			donor.Name,
+			request.ID,
+		); err != nil {
+			log.Printf(
+				"[DonationService] Failed to send submission email for request #%d: %v",
+				request.ID,
+				err,
+			)
+		}
 	}
 
-	return createdRequest, nil
+	// The database transaction has succeeded.
+	// Do not delete uploaded files if this read fails.
+	return s.repo.FindByID(ctx, request.ID)
 }
 
-// GetByID retrieves a donation request by its ID.
+// validateImageFile checks image size and actual MIME type.
+func validateImageFile(
+	fileHeader *multipart.FileHeader,
+) (string, error) {
+	if fileHeader == nil || fileHeader.Size <= 0 {
+		return "", ErrInvalidImage
+	}
+
+	if fileHeader.Size > maxImageSize {
+		return "", ErrImageTooLarge
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidImage, err)
+	}
+	defer file.Close()
+
+	buffer := make([]byte, 512)
+	n, err := file.Read(buffer)
+
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("%w: %v", ErrInvalidImage, err)
+	}
+
+	contentType := http.DetectContentType(buffer[:n])
+
+	switch contentType {
+	case "image/jpeg", "image/png", "image/webp":
+		return contentType, nil
+	default:
+		return "", ErrInvalidImageType
+	}
+}
+
+// imageFileName generates a unique logical filename for each food image.
+func imageFileName(
+	foodIndex, imageIndex int,
+	contentType string,
+) string {
+	extension := ".jpg"
+
+	switch contentType {
+	case "image/png":
+		extension = ".png"
+	case "image/webp":
+		extension = ".webp"
+	}
+
+	return fmt.Sprintf(
+		"food-%d-image-%d%s",
+		foodIndex+1,
+		imageIndex+1,
+		extension,
+	)
+}
+
+// cleanupUploadedImages deletes ImageKit files when DB persistence fails.
+func (s *donationService) cleanupUploadedImages(
+	ctx context.Context,
+	fileIDs []string,
+) {
+	if len(fileIDs) == 0 || s.imageStore == nil {
+		return
+	}
+
+	// Cleanup should still run even if the original request was cancelled.
+	cleanupCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		15*time.Second,
+	)
+	defer cancel()
+
+	for _, fileID := range fileIDs {
+		if err := s.imageStore.Delete(cleanupCtx, fileID); err != nil {
+			log.Printf(
+				"[DonationService] Failed to cleanup ImageKit file %s: %v",
+				fileID,
+				err,
+			)
+		}
+	}
+}
+
 func (s *donationService) GetByID(
 	ctx context.Context,
 	requestID int32,
 ) (*model.DonationRequest, error) {
-
 	if requestID <= 0 {
 		return nil, ErrInvalidDonationData
 	}
@@ -132,25 +369,22 @@ func (s *donationService) GetByID(
 	return s.repo.FindByID(ctx, requestID)
 }
 
-// GetAll retrieves donation requests with optional status filtering and pagination.
 func (s *donationService) GetAll(
 	ctx context.Context,
 	status string,
 	page, limit int,
 ) ([]model.DonationRequest, int64, error) {
-
-	status = strings.TrimSpace(status)
-
 	if status != "" {
-		switch model.DonationStatus(status) {
-		case model.DonationPending,
-			model.DonationApproved,
-			model.DonationRejected,
-			model.DonationPickupScheduled,
-			model.DonationPickedUp,
-			model.DonationReceived:
-			// Valid status.
-		default:
+		validStatuses := map[string]bool{
+			string(model.DonationPending):         true,
+			string(model.DonationApproved):        true,
+			string(model.DonationRejected):        true,
+			string(model.DonationPickupScheduled): true,
+			string(model.DonationPickedUp):        true,
+			string(model.DonationReceived):        true,
+		}
+
+		if !validStatuses[status] {
 			return nil, 0, ErrInvalidStatus
 		}
 	}
@@ -170,54 +404,77 @@ func (s *donationService) GetAll(
 	return s.repo.FindAll(ctx, status, page, limit)
 }
 
-// Review approves or rejects a pending donation request.
 func (s *donationService) Review(
 	ctx context.Context,
 	requestID int32,
 	input dto.ReviewDonationRequest,
-) error {
-
+) (*model.DonationRequest, error) {
 	if requestID <= 0 {
-		return ErrInvalidDonationData
+		return nil, ErrInvalidDonationData
 	}
 
-	var status model.DonationStatus
+	var newStatus model.DonationStatus
 
 	switch input.Status {
 	case dto.ReviewApproved:
-		status = model.DonationApproved
-
+		newStatus = model.DonationApproved
 	case dto.ReviewRejected:
-		status = model.DonationRejected
-
+		newStatus = model.DonationRejected
 	default:
-		return ErrInvalidStatus
+		return nil, ErrInvalidStatus
 	}
 
-	// Retrieve the request before reviewing it.
-	request, err := s.repo.FindByID(ctx, requestID)
+	// Fetch donation with donor information.
+	donation, err := s.repo.FindByID(ctx, requestID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Only pending requests can be reviewed.
-	if request.Status != model.DonationPending {
-		return ErrInvalidTransition
+	if donation.Status != model.DonationPending {
+		return nil, ErrInvalidTransition
 	}
 
-	return s.repo.UpdateStatus(ctx, requestID, status)
+	// Update database first.
+	if err := s.repo.UpdateStatus(ctx, requestID, newStatus); err != nil {
+		return nil, err
+	}
+
+	// Send notification after the status update succeeds.
+	if s.mailer != nil {
+		statusLabel := "Disetujui"
+
+		if newStatus == model.DonationRejected {
+			statusLabel = "Ditolak"
+		}
+
+		if err := s.mailer.SendDonationStatusEmail(
+			donation.Donor.Email,
+			donation.Donor.Name,
+			statusLabel,
+			"",
+		); err != nil {
+			log.Printf(
+				"[DonationService] Failed to send status email for request #%d: %v",
+				requestID,
+				err,
+			)
+		}
+	}
+
+	return s.repo.FindByID(ctx, requestID)
 }
 
-// stringToPointer converts a non-empty string into a string pointer.
-// Empty strings are represented as nil (NULL in the database).
-func stringToPointer(value string) *string {
-	value = strings.TrimSpace(value)
-
-	if value == "" {
+func stringToPointer(value *string) *string {
+	if value == nil {
 		return nil
 	}
 
-	return &value
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+
+	return &trimmed
 }
 
 var _ DonationService = (*donationService)(nil)
