@@ -10,6 +10,8 @@ import (
 
 	_ "github.com/joho/godotenv/autoload"
 
+	producthandler "biteshare-api/ecommerce-api/handler"
+	"biteshare-api/ecommerce-api/service"
 	"biteshare-api/internal/auth"
 	"biteshare-api/internal/database"
 )
@@ -17,6 +19,7 @@ import (
 type Server struct {
 	port       int
 	jwtManager *auth.JWTManager
+	products   *producthandler.ProductHandler
 
 	db database.Service
 }
@@ -53,8 +56,9 @@ func NewServer() *http.Server {
 		port:       port,
 		jwtManager: jwtManager,
 
-		db: database.New(),
+		db:       database.New(),
 	}
+	NewServer.products = producthandler.NewProductHandler(NewServer.db, service.NewImageKitUploader())
 
 	// Declare Server config
 	server := &http.Server{
