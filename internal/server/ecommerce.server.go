@@ -10,16 +10,21 @@ import (
 
 	_ "github.com/joho/godotenv/autoload"
 
-	producthandler "biteshare-api/ecommerce-api/handler"
-	"biteshare-api/ecommerce-api/service"
+	"biteshare-api/ecommerce-api/handler"
+	"biteshare-api/ecommerce-api/repository"
+	ecomservice "biteshare-api/ecommerce-api/service"
 	"biteshare-api/internal/auth"
 	"biteshare-api/internal/database"
+	"biteshare-api/internal/mailer"
+	"biteshare-api/internal/payment"
 )
 
 type Server struct {
 	port       int
 	jwtManager *auth.JWTManager
-	products   *producthandler.ProductHandler
+	products   *handler.ProductHandler
+	orders     *handler.OrderHandler
+	payments   *handler.PaymentHandler
 	db         database.Service
 }
 
@@ -59,7 +64,11 @@ func NewCustomServer(port int) *http.Server {
 		jwtManager: jwtManager,
 		db:         database.New(),
 	}
-	s.products = producthandler.NewProductHandler(s.db, service.NewImageKitUploader())
+	s.products = handler.NewProductHandler(s.db, ecomservice.NewImageKitUploader())
+	orderRepository := repository.NewOrderRepository(s.db)
+	orderService := ecomservice.NewOrderService(orderRepository, mailer.New())
+	s.orders = handler.NewOrderHandler(orderService)
+	s.payments = handler.NewPaymentHandler(payment.NewService(s.db), ecomservice.NewImageKitUploader())
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.port),
