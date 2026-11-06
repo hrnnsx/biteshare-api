@@ -28,6 +28,15 @@ func (s *Server) RegisterRoutes() http.Handler {
 	// Admin listing requires a valid bearer token with the admin role.
 	r.GET("/admins", auth.RequireAdmin(s.jwtManager), s.listAdminsHandler)
 
+	// Public product catalog endpoints intentionally do not use JWT middleware.
+	r.GET("/ecom/products", s.products.ListProducts)
+	r.GET("/ecom/product/:id", s.products.GetProduct)
+
+	// Product mutations require an authenticated admin JWT.
+	r.POST("/ecom/products", auth.RequireAdmin(s.jwtManager), s.products.CreateProduct)
+	r.PATCH("/ecom/products/:id", auth.RequireAdmin(s.jwtManager), s.products.UpdateProduct)
+	r.DELETE("/ecom/product/:id", auth.RequireAdmin(s.jwtManager), s.products.DeleteProduct)
+
 	return r
 }
 
