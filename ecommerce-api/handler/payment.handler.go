@@ -7,6 +7,7 @@ import (
 
 	ecomservice "biteshare-api/ecommerce-api/service"
 	"biteshare-api/internal/payment"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -20,6 +21,23 @@ func NewPaymentHandler(paymentService payment.PaymentService, uploader *ecomserv
 }
 
 // SubmitProof handles POST /payments/proof.
+// SubmitProof submits a manual payment proof.
+//
+// @Summary Submit payment proof
+// @Description Buyer submits a payment proof image for an existing order. The image is uploaded to ImageKit and its URL is stored in the database.
+// @Tags Payments
+// @Accept multipart/form-data
+// @Produce json
+// @Param order_number formData string true "Order number"
+// @Param transaction_reference formData string false "Bank transaction reference"
+// @Param image formData file true "Payment proof image"
+// @Success 200 {object} map[string]interface{} "Payment proof submitted successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid request or missing payment proof"
+// @Failure 404 {object} map[string]interface{} "Payment not found"
+// @Failure 409 {object} map[string]interface{} "Payment is already completed"
+// @Failure 502 {object} map[string]interface{} "Image upload or payment proof submission failed"
+// @Failure 503 {object} map[string]interface{} "ImageKit is not configured"
+// @Router /payments/proof [post]
 func (h *PaymentHandler) SubmitProof(c *gin.Context) {
 	if err := c.Request.ParseMultipartForm(10 << 20); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "request must be multipart/form-data"})
@@ -68,6 +86,17 @@ func (h *PaymentHandler) SubmitProof(c *gin.Context) {
 }
 
 // ListProofs handles GET /payments/proofs for admins.
+// ListProofs retrieves all submitted payment proofs.
+//
+// @Summary Get all payment proofs
+// @Description Admin retrieves a list of payment proofs submitted by buyers.
+// @Tags Payments
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "List of payment proofs"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Could not list payment proofs"
+// @Router /payments/proofs [get]
 func (h *PaymentHandler) ListProofs(c *gin.Context) {
 	proofs, err := h.service.ListProofs(c.Request.Context())
 	if err != nil {
@@ -79,6 +108,20 @@ func (h *PaymentHandler) ListProofs(c *gin.Context) {
 }
 
 // GetProof handles GET /payments/proofs/:order_number for admins.
+// GetProof retrieves payment proof details by order number.
+//
+// @Summary Get payment proof details
+// @Description Admin retrieves payment proof information and related order details using the order number.
+// @Tags Payments
+// @Produce json
+// @Security BearerAuth
+// @Param order_number path string true "Order number"
+// @Success 200 {object} map[string]interface{} "Payment proof details"
+// @Failure 400 {object} map[string]interface{} "Order number is required"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Payment proof not found"
+// @Failure 500 {object} map[string]interface{} "Could not get payment proof"
+// @Router /payments/proofs/{order_number} [get]
 func (h *PaymentHandler) GetProof(c *gin.Context) {
 	orderNumber := strings.TrimSpace(c.Param("order_number"))
 	if orderNumber == "" {

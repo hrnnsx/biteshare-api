@@ -37,6 +37,20 @@ func gracefulShutdown(apiServer *http.Server, done chan bool) {
 	done <- true
 }
 
+// @title BiteShare Donation API
+// @version 1.0
+// @description API untuk pengelolaan donasi makanan, mulai dari pengajuan donasi, peninjauan admin, hingga penjadwalan pickup.
+// @termsOfService http://swagger.io/terms/
+
+// @contact.name BiteShare Development Team
+
+// @host localhost:8081
+// @BasePath /
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Masukkan JWT dengan format: Bearer {token}
 func main() {
 	apiServer := server.NewDonationServer()
 

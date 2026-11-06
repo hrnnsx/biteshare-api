@@ -14,6 +14,7 @@ import (
 	"biteshare-api/ecommerce-api/service"
 	"biteshare-api/internal/auth"
 	"biteshare-api/internal/database"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -31,6 +32,15 @@ func NewProductHandler(db database.Service, uploader *service.ImageKitUploader) 
 	}
 }
 
+// ListProducts retrieves all available products.
+//
+// @Summary Get all available products
+// @Description Retrieve the public product catalog containing available food products.
+// @Tags Products
+// @Produce json
+// @Success 200 {object} map[string]interface{} "List of available products"
+// @Failure 500 {object} map[string]interface{} "Could not list products"
+// @Router /ecom/products [get]
 // ListProducts returns available products for the public catalog.
 func (h *ProductHandler) ListProducts(c *gin.Context) {
 	var products []model.Product
@@ -42,7 +52,18 @@ func (h *ProductHandler) ListProducts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"products": products})
 }
 
-// GetProduct returns one available product for the public catalog.
+// GetProduct retrieves a product by its ID.
+//
+// @Summary Get product details
+// @Description Retrieve details of one available product, including its images.
+// @Tags Products
+// @Produce json
+// @Param id path int true "Product ID"
+// @Success 200 {object} map[string]interface{} "Product details"
+// @Failure 400 {object} map[string]interface{} "Invalid product ID"
+// @Failure 404 {object} map[string]interface{} "Product not found"
+// @Failure 500 {object} map[string]interface{} "Could not get product"
+// @Router /ecom/product/{id} [get]
 func (h *ProductHandler) GetProduct(c *gin.Context) {
 	productID, err := productIDFromPath(c)
 	if err != nil {
@@ -63,7 +84,29 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"product": product})
 }
 
-// CreateProduct creates a product and uploads its image to ImageKit.
+// CreateProduct creates a new food product.
+//
+// @Summary Create a product
+// @Description Admin creates a product and uploads its image to ImageKit. Product information is submitted using multipart/form-data.
+// @Tags Products
+// @Accept multipart/form-data
+// @Produce json
+// @Security BearerAuth
+// @Param product_name formData string true "Product name"
+// @Param price formData number true "Product price"
+// @Param stock formData number true "Available stock"
+// @Param unit formData string true "Product unit"
+// @Param description formData string false "Product description"
+// @Param status formData string false "Product status"
+// @Param expiry_date formData string false "Expiry date (YYYY-MM-DD)"
+// @Param image formData file true "Product image"
+// @Success 201 {object} map[string]interface{} "Product created successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid product information"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 502 {object} map[string]interface{} "Image upload failed"
+// @Failure 503 {object} map[string]interface{} "ImageKit is not configured"
+// @Failure 500 {object} map[string]interface{} "Could not create product"
+// @Router /ecom/products [post]
 func (h *ProductHandler) CreateProduct(c *gin.Context) {
 	adminID, ok := auth.AdminID(c)
 	if !ok {
@@ -98,7 +141,31 @@ func (h *ProductHandler) CreateProduct(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"product": product})
 }
 
-// UpdateProduct updates product fields and optionally replaces its primary image.
+// UpdateProduct updates an existing product.
+//
+// @Summary Update a product
+// @Description Admin updates product information. All fields are optional, but at least one field or a replacement image must be provided.
+// @Tags Products
+// @Accept multipart/form-data
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "Product ID"
+// @Param product_name formData string false "Product name"
+// @Param price formData number false "Product price"
+// @Param stock formData number false "Available stock"
+// @Param unit formData string false "Product unit"
+// @Param description formData string false "Product description"
+// @Param status formData string false "Product status"
+// @Param expiry_date formData string false "Expiry date (YYYY-MM-DD)"
+// @Param image formData file false "Replacement product image"
+// @Success 200 {object} map[string]interface{} "Product updated successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid product information"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Product not found"
+// @Failure 502 {object} map[string]interface{} "Image upload failed"
+// @Failure 503 {object} map[string]interface{} "ImageKit is not configured"
+// @Failure 500 {object} map[string]interface{} "Could not update product"
+// @Router /ecom/products/{id} [patch]
 func (h *ProductHandler) UpdateProduct(c *gin.Context) {
 	adminID, ok := auth.AdminID(c)
 	if !ok {
@@ -147,7 +214,22 @@ func (h *ProductHandler) UpdateProduct(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "product updated successfully"})
 }
 
-// DeleteProduct removes a product and its database image records.
+// DeleteProduct deletes a product.
+//
+// @Summary Delete a product
+// @Description Admin deletes a product and its associated images from ImageKit.
+// @Tags Products
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "Product ID"
+// @Success 200 {object} map[string]interface{} "Product deleted successfully"
+// @Failure 400 {object} map[string]interface{} "Invalid product ID"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Product not found"
+// @Failure 502 {object} map[string]interface{} "Failed to delete product image"
+// @Failure 503 {object} map[string]interface{} "ImageKit is not configured"
+// @Failure 500 {object} map[string]interface{} "Could not delete product"
+// @Router /ecom/product/{id} [delete]
 func (h *ProductHandler) DeleteProduct(c *gin.Context) {
 	adminID, ok := auth.AdminID(c)
 	if !ok {

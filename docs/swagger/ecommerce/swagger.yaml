@@ -1,0 +1,814 @@
+basePath: /
+definitions:
+  dto.CheckoutItem:
+    properties:
+      product_id:
+        type: integer
+      quantity:
+        type: number
+    required:
+    - product_id
+    - quantity
+    type: object
+  dto.CheckoutRequest:
+    properties:
+      address:
+        type: string
+      delivery_fee:
+        type: number
+      email:
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/dto.CheckoutItem'
+        minItems: 1
+        type: array
+      name:
+        type: string
+      payment_method:
+        type: string
+      phone:
+        type: string
+    required:
+    - address
+    - email
+    - items
+    - name
+    - payment_method
+    - phone
+    type: object
+  dto.CreatePickupScheduleRequest:
+    properties:
+      pickup_date:
+        type: string
+      pickup_time:
+        type: string
+    required:
+    - pickup_date
+    - pickup_time
+    type: object
+  dto.DonationReviewStatus:
+    enum:
+    - approved
+    - rejected
+    type: string
+    x-enum-varnames:
+    - ReviewApproved
+    - ReviewRejected
+  dto.ReviewDonationRequest:
+    properties:
+      status:
+        allOf:
+        - $ref: '#/definitions/dto.DonationReviewStatus'
+        enum:
+        - approved
+        - rejected
+    required:
+    - status
+    type: object
+host: localhost:8080
+info:
+  contact:
+    name: BiteShare Development Team
+  description: API untuk katalog produk hasil pengolahan makanan, checkout, pengelolaan
+    pesanan, dan pembayaran.
+  termsOfService: http://swagger.io/terms/
+  title: BiteShare E-Commerce API
+  version: "1.0"
+paths:
+  /:
+    get:
+      description: Returns a message indicating that the Donation API is running.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Donation API is running
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Donation API welcome endpoint
+      tags:
+      - System
+  /api/v1/donations:
+    get:
+      description: Retrieve donation requests with optional status filtering and pagination.
+      parameters:
+      - description: Filter by donation status
+        enum:
+        - pending
+        - approved
+        - rejected
+        - pickup_scheduled
+        - picked_up
+        - received
+        in: query
+        name: status
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Number of records per page
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Donation list and pagination information
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid query parameters
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get all donations
+      tags:
+      - Donations
+    post:
+      consumes:
+      - multipart/form-data
+      description: Submit a donation request containing donor information and one
+        or more food items. Each food item must include at least one image. Images
+        are uploaded to ImageKit.
+      parameters:
+      - description: Donation information in JSON format
+        in: formData
+        name: payload
+        required: true
+        type: string
+      - description: Food item image. Use the corresponding index for each food item;
+          at least one image is required per item.
+        in: formData
+        name: foods[0].images
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Donation submitted successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid payload or missing food image
+          schema:
+            additionalProperties: true
+            type: object
+        "413":
+          description: Request or image exceeds size limit
+          schema:
+            additionalProperties: true
+            type: object
+        "415":
+          description: Content type must be multipart/form-data
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Image upload failed
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Submit a food donation
+      tags:
+      - Donations
+  /api/v1/donations/{id}:
+    get:
+      description: Retrieve complete information about a donation request, including
+        donor, donated foods, images, and pickup schedules.
+      parameters:
+      - description: Donation request ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Donation details
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid donation ID
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Donation request not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get donation details
+      tags:
+      - Donations
+  /api/v1/donations/{id}/review:
+    patch:
+      consumes:
+      - application/json
+      description: Admin reviews a pending donation request and changes its status
+        to approved or rejected.
+      parameters:
+      - description: Donation request ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Donation review information
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ReviewDonationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Donation reviewed successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request body or status
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Donation request not found
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Invalid donation status transition
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Review a donation request
+      tags:
+      - Donations
+  /api/v1/donations/{id}/schedules:
+    post:
+      consumes:
+      - application/json
+      description: Admin schedules the pickup date and time for an approved donation
+        request. The donor receives an email notification after the schedule is successfully
+        created.
+      parameters:
+      - description: Donation request ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Pickup schedule information
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreatePickupScheduleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Pickup scheduled successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request body or schedule data
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Donation request not found
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Donation must be approved before scheduling pickup
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Schedule a donation pickup
+      tags:
+      - Pickup Schedules
+  /ecom/checkout:
+    post:
+      consumes:
+      - application/json
+      description: Creates an order for a buyer, validates product availability and
+        stock, calculates the order total, and initiates the order process.
+      parameters:
+      - description: Buyer and order information
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CheckoutRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Checkout completed successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid checkout information
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Product unavailable, duplicate product, or insufficient stock
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Could not create order
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Checkout products
+      tags:
+      - Orders
+  /ecom/product/{id}:
+    delete:
+      description: Admin deletes a product and its associated images from ImageKit.
+      parameters:
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Product deleted successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid product ID
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Product not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Could not delete product
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Failed to delete product image
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: ImageKit is not configured
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a product
+      tags:
+      - Products
+    get:
+      description: Retrieve details of one available product, including its images.
+      parameters:
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Product details
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid product ID
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Product not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Could not get product
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get product details
+      tags:
+      - Products
+  /ecom/products:
+    get:
+      description: Retrieve the public product catalog containing available food products.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of available products
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Could not list products
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get all available products
+      tags:
+      - Products
+    post:
+      consumes:
+      - multipart/form-data
+      description: Admin creates a product and uploads its image to ImageKit. Product
+        information is submitted using multipart/form-data.
+      parameters:
+      - description: Product name
+        in: formData
+        name: product_name
+        required: true
+        type: string
+      - description: Product price
+        in: formData
+        name: price
+        required: true
+        type: number
+      - description: Available stock
+        in: formData
+        name: stock
+        required: true
+        type: number
+      - description: Product unit
+        in: formData
+        name: unit
+        required: true
+        type: string
+      - description: Product description
+        in: formData
+        name: description
+        type: string
+      - description: Product status
+        in: formData
+        name: status
+        type: string
+      - description: Expiry date (YYYY-MM-DD)
+        in: formData
+        name: expiry_date
+        type: string
+      - description: Product image
+        in: formData
+        name: image
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Product created successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid product information
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Could not create product
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Image upload failed
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: ImageKit is not configured
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a product
+      tags:
+      - Products
+  /ecom/products/{id}:
+    patch:
+      consumes:
+      - multipart/form-data
+      description: Admin updates product information. All fields are optional, but
+        at least one field or a replacement image must be provided.
+      parameters:
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Product name
+        in: formData
+        name: product_name
+        type: string
+      - description: Product price
+        in: formData
+        name: price
+        type: number
+      - description: Available stock
+        in: formData
+        name: stock
+        type: number
+      - description: Product unit
+        in: formData
+        name: unit
+        type: string
+      - description: Product description
+        in: formData
+        name: description
+        type: string
+      - description: Product status
+        in: formData
+        name: status
+        type: string
+      - description: Expiry date (YYYY-MM-DD)
+        in: formData
+        name: expiry_date
+        type: string
+      - description: Replacement product image
+        in: formData
+        name: image
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Product updated successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid product information
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Product not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Could not update product
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Image upload failed
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: ImageKit is not configured
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a product
+      tags:
+      - Products
+  /health:
+    get:
+      description: Returns database connection health information.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Health status
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Donation API health check
+      tags:
+      - System
+  /payments/proof:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Buyer submits a payment proof image for an existing order. The
+        image is uploaded to ImageKit and its URL is stored in the database.
+      parameters:
+      - description: Order number
+        in: formData
+        name: order_number
+        required: true
+        type: string
+      - description: Bank transaction reference
+        in: formData
+        name: transaction_reference
+        type: string
+      - description: Payment proof image
+        in: formData
+        name: image
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Payment proof submitted successfully
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request or missing payment proof
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Payment not found
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Payment is already completed
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Image upload or payment proof submission failed
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: ImageKit is not configured
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Submit payment proof
+      tags:
+      - Payments
+  /payments/proofs:
+    get:
+      description: Admin retrieves a list of payment proofs submitted by buyers.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of payment proofs
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Could not list payment proofs
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get all payment proofs
+      tags:
+      - Payments
+  /payments/proofs/{order_number}:
+    get:
+      description: Admin retrieves payment proof information and related order details
+        using the order number.
+      parameters:
+      - description: Order number
+        in: path
+        name: order_number
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Payment proof details
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Order number is required
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Payment proof not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Could not get payment proof
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get payment proof details
+      tags:
+      - Payments
+securityDefinitions:
+  BearerAuth:
+    description: 'Masukkan JWT dengan format: Bearer {token}'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
