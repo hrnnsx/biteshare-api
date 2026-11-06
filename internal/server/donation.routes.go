@@ -7,6 +7,7 @@ import (
 	"biteshare-api/donation-api/repository"
 	"biteshare-api/donation-api/service"
 	"biteshare-api/internal/auth"
+	"biteshare-api/internal/imagekit"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -45,13 +46,18 @@ func (s *DonationServer) RegisterDonationRoutes() http.Handler {
 		s.db.GORM(),
 	)
 
+	imageKitClient, err := imagekit.NewClient()
+	if err != nil {
+		panic(err)
+	}
+
 	pickupScheduleRepo := repository.NewPickupScheduleRepository(
 		s.db.GORM(),
 	)
 
 	// Initialize services.
 	donationService := service.NewDonationService(
-		donationRepo,
+		donationRepo, imageKitClient,
 	)
 
 	pickupScheduleService := service.NewPickupScheduleService(
