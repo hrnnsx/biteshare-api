@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -17,43 +15,40 @@ import (
 )
 
 func gracefulShutdown(apiServer *http.Server, done chan bool) {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
 	defer stop()
 
 	<-ctx.Done()
-	log.Println("[Donation API] shutting down gracefully, press Ctrl+C again to force")
+	log.Println("shutting down gracefully, press Ctrl+C again to force")
 	stop()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	if err := apiServer.Shutdown(ctx); err != nil {
-		log.Printf("[Donation API] forced shutdown error: %v", err)
+		log.Printf("Server forced to shutdown with error: %v", err)
 	}
-	log.Println("[Donation API] server exiting")
+
+	log.Println("Server exiting")
 	done <- true
 }
 
 func main() {
-	// Donation API berjalan di port yang berbeda (default 8081)
-	portStr := os.Getenv("DONATION_PORT")
-	if portStr == "" {
-		portStr = "8081"
-	}
-	port, _ := strconv.Atoi(portStr)
-
-	// Inisialisasi server dengan port donation
-	srv := server.NewCustomServer(port)
+	apiServer := server.NewDonationServer()
 
 	done := make(chan bool, 1)
-	go gracefulShutdown(srv, done)
+	go gracefulShutdown(apiServer, done)
 
-	log.Printf("[Donation API] running on port :%d\n", port)
-	err := srv.ListenAndServe()
+	log.Printf("Donation API is running on %s", apiServer.Addr)
+	err := apiServer.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
-		panic(fmt.Sprintf("[Donation API] server error: %s", err))
+		panic(fmt.Sprintf("http server error: %s", err))
 	}
 
 	<-done
-	log.Println("[Donation API] Graceful shutdown complete.")
+	log.Println("Graceful shutdown complete.")
 }

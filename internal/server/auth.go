@@ -6,6 +6,7 @@ import (
 
 	"biteshare-api/ecommerce-api/model"
 	"biteshare-api/internal/auth"
+
 	"github.com/gin-gonic/gin"
 )
 

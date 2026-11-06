@@ -11,25 +11,31 @@ import (
 
 func (s *Server) RegisterRoutes() http.Handler {
 	r := gin.Default()
-
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:5173"}, // Add your frontend URL
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowHeaders:     []string{"Accept", "Authorization", "Content-Type"},
-		AllowCredentials: true, // Enable cookies/auth
+		AllowCredentials: true,
 	}))
 
 	r.GET("/", s.HelloWorldHandler)
-
 	r.GET("/health", s.healthHandler)
 
-	// Admin login returns a signed JWT after the password is verified.
+	// Admin login & listing
 	r.POST("/auth/login", s.adminLoginHandler)
-
-	// Admin listing requires a valid bearer token with the admin role.
 	r.GET("/admins", auth.RequireAdmin(s.jwtManager), s.listAdminsHandler)
 
+	// Payment Webhook endpoint (Person 3)
 	r.POST("/payments/webhook", s.paymentWebhookHandler)
+
+	// Public product catalog endpoints
+	r.GET("/ecom/products", s.products.ListProducts)
+	r.GET("/ecom/product/:id", s.products.GetProduct)
+
+	// Product mutations require an authenticated admin JWT
+	r.POST("/ecom/products", auth.RequireAdmin(s.jwtManager), s.products.CreateProduct)
+	r.PATCH("/ecom/products/:id", auth.RequireAdmin(s.jwtManager), s.products.UpdateProduct)
+	r.DELETE("/ecom/product/:id", auth.RequireAdmin(s.jwtManager), s.products.DeleteProduct)
 
 	return r
 }
@@ -37,7 +43,6 @@ func (s *Server) RegisterRoutes() http.Handler {
 func (s *Server) HelloWorldHandler(c *gin.Context) {
 	resp := make(map[string]string)
 	resp["message"] = "Hello World"
-
 	c.JSON(http.StatusOK, resp)
 }
 
