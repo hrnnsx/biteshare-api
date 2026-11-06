@@ -142,7 +142,9 @@ CREATE TABLE payments (
  amount NUMERIC(12,2) NOT NULL CHECK (amount >= 0),
  payment_status VARCHAR(30) NOT NULL DEFAULT 'pending',
  transaction_reference VARCHAR(100) UNIQUE,
- paid_at TIMESTAMP WITH TIME ZONE
+ paid_at TIMESTAMP WITH TIME ZONE,
+ proof_image_url TEXT,
+ proof_file_id VARCHAR(255)
 );
 
 CREATE TABLE deliveries (

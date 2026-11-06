@@ -25,12 +25,16 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.POST("/auth/login", s.adminLoginHandler)
 	r.GET("/admins", auth.RequireAdmin(s.jwtManager), s.listAdminsHandler)
 
-	// Payment Webhook endpoint (Person 3)
-	r.POST("/payments/webhook", s.paymentWebhookHandler)
+	// Payment endpoints require an authenticated admin JWT.
+	r.POST("/payments/webhook", auth.RequireAdmin(s.jwtManager), s.paymentWebhookHandler)
+	r.POST("/payments/proof", s.payments.SubmitProof)
+	r.GET("/payments/proofs", auth.RequireAdmin(s.jwtManager), s.payments.ListProofs)
+	r.GET("/payments/proofs/:order_number", auth.RequireAdmin(s.jwtManager), s.payments.GetProof)
 
 	// Public product catalog endpoints
 	r.GET("/ecom/products", s.products.ListProducts)
 	r.GET("/ecom/product/:id", s.products.GetProduct)
+	r.POST("/ecom/checkout", s.orders.Checkout)
 
 	// Product mutations require an authenticated admin JWT
 	r.POST("/ecom/products", auth.RequireAdmin(s.jwtManager), s.products.CreateProduct)
